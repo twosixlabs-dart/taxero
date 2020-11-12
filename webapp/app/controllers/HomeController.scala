@@ -44,14 +44,14 @@ class HomeController @Inject()(cc: ControllerComponents) extends AbstractControl
 
   def getHyponyms(query: String) = Action {
     val tokens = query.split(" ")
-    val hyponyms = taxero.getRankedHyponyms(tokens)
+    val hyponyms = taxero.getRankedHyponyms(tokens, lemmatize = true)
     val json = JsonUtils.mkJson(hyponyms)
     Ok(json)
   }
 
   def getCohyponyms(query: String) = Action {
     val tokens = query.split(" ")
-    val cohyponyms = taxero.getRankedCohyponyms(tokens)
+    val cohyponyms = taxero.getRankedCohyponyms(tokens, lemmatize = true)
     val json = JsonUtils.mkJson(cohyponyms)
     Ok(json)
   }

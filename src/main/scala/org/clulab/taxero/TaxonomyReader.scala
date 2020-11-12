@@ -9,7 +9,7 @@ import ai.lum.common.TryWithResources.using
 import ai.lum.odinson._
 import ai.lum.odinson.lucene.search._
 import ai.lum.odinson.utils.QueryUtils
-import org.clulab.embeddings.word2vec.Word2Vec
+import org.clulab.embeddings.{WordEmbeddingMap => Word2Vec}
 import org.clulab.processors.fastnlp.FastNLPProcessor
 
 
@@ -49,38 +49,38 @@ class TaxonomyReader(
 
   val proc = new FastNLPProcessor
 
-  def getRankedHypernyms(tokens: Seq[String]): Seq[ScoredMatch] = {
-    val lemmas = convertToLemmas(tokens)
-    val extractors = mkHypernymExtractors(lemmas)
+  def getRankedHypernyms(tokens: Seq[String], lemmatize: Boolean): Seq[ScoredMatch] = {
+    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val extractors = mkHypernymExtractors(items, lemmatize)
     val matches = getMatches(extractors)
-    rankMatches(lemmas, matches)
+    rankMatches(items, matches)
   }
 
-  def getRankedHyponyms(tokens: Seq[String]): Seq[ScoredMatch] = {
-    val lemmas = convertToLemmas(tokens)
-    val extractors = mkHyponymExtractors(lemmas)
+  def getRankedHyponyms(tokens: Seq[String], lemmatize: Boolean): Seq[ScoredMatch] = {
+    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val extractors = mkHyponymExtractors(items, lemmatize)
     val matches = getMatches(extractors)
-    rankMatches(lemmas, matches)
+    rankMatches(items, matches)
   }
 
-  def getRankedCohyponyms(tokens: Seq[String]): Seq[ScoredMatch] = {
-    val lemmas = convertToLemmas(tokens)
-    val extractors = mkCohyponymExtractors(lemmas)
+  def getRankedCohyponyms(tokens: Seq[String], lemmatize: Boolean): Seq[ScoredMatch] = {
+    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val extractors = mkCohyponymExtractors(items, lemmatize)
     val matches = getMatches(extractors)
-    rankMatches(lemmas, matches) 
+    rankMatches(items, matches)
   }
 
   def getExpandedHypernyms(pattern: Seq[String], n: Int): Seq[ScoredMatch] = {
     // start query set with the provided query
     val allQueries = mutable.HashSet(pattern)
     // add the n closest cohyponyms to the query set
-    allQueries ++= getRankedCohyponyms(pattern).take(n).map(_.result)
+    allQueries ++= getRankedCohyponyms(pattern, lemmatize = true).take(n).map(_.result)
     // start an empty map for the hypernym candidate counts
     val hypernymCounts = new Consolidator
     // count hypernym candidates
     for {
       q <- allQueries
-      m <- getRankedHypernyms(q)                 // getHypernyms changed to getRankedHypernyms   
+      m <- getRankedHypernyms(q, lemmatize = true)                 // getHypernyms changed to getRankedHypernyms
     } hypernymCounts.add(m.result, m.count, Nil)
     // add the heads of each hypernym to the results
     for (candidate <- hypernymCounts.keys) {
@@ -92,17 +92,17 @@ class TaxonomyReader(
     rankMatches(pattern, hypernymCounts.getMatches)
   }
 
-  def executeGivenRules(tokens: Seq[String], rules: String): Seq[ScoredMatch] = {
-    val lemmas = convertToLemmas(tokens)
-    val extractors = mkExtractorsFromRules(lemmas, rules)
+  def executeGivenRules(tokens: Seq[String], rules: String, lemmatize: Boolean): Seq[ScoredMatch] = {
+    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val extractors = mkExtractorsFromRules(items, rules, lemmatize)
     val matches = getMatches(extractors)
-    rankMatches(lemmas, matches)
+    rankMatches(items, matches)
   }
 
   def getMatches(extractors: Seq[Extractor]): Seq[Match] = {
-    val matches = for (m <- extractorEngine.extractMentions(extractors)) yield getResultTokens(m)
+    val matches = for (m <- extractorEngine.extractNoState(extractors)) yield getResultTokens(m)
     // count matches so that we can add them to the consolidator efficiently
-    val groupedMatches = matches
+    val groupedMatches = matches.toList
       .groupBy(_.tokens)
       // get the count of how many times this result appeared and all the sentences where it happened
       .mapValues(vs => (vs.length, vs.map(v => v.sentence)))
@@ -116,14 +116,14 @@ class TaxonomyReader(
   }
 
   def getResultTokens(mention: Mention): MatchTokensAndSentence = {
-    val args = mention.odinsonMatch.arguments
+    val args = mention.arguments
     val m = args.get("result") match {
       // if there is a captured mention called "result" then that's the result
       case Some(matches) => matches.head
       // if there is no named result, then use the whole match as the result
-      case None => mention.odinsonMatch
+      case None => mention
     }
-    val tokens = extractorEngine.getTokens(mention.luceneDocId, m)
+    val tokens = extractorEngine.getTokensForSpan(m)
     val sentence = extractorEngine
       .getTokens(mention.luceneDocId, extractorEngine.displayField)
       .mkString(" ")
@@ -169,7 +169,7 @@ class TaxonomyReader(
   // tokens changed to lemmas as the first argument  
   def mkLemmaPattern(lemmas: Seq[String]): String = {            
     //println("TOKENS: " + tokens.mkString(" "))
-    println("LEMMAS: " + lemmas.mkString(" "))
+//    println("LEMMAS: " + lemmas.mkString(" "))
     lemmas
       .map(x => s"[lemma=${QueryUtils.maybeQuoteLabel(x)}]")
       .mkString(" ")
@@ -177,30 +177,38 @@ class TaxonomyReader(
     // [lemma=other] [lemma=dog]
   }
 
-  def mkHypernymExtractors(tokens: Seq[String]): Seq[Extractor] = {
-    mkExtractorsFromFile(tokens, "hypernym-rules.yml")
+  def mkNormPattern(tokens: Seq[String]): String = {
+    tokens
+      .map(x => s"[norm=${QueryUtils.maybeQuoteLabel(x)}]")
+      .mkString(" ")
   }
 
-  def mkHyponymExtractors(tokens: Seq[String]): Seq[Extractor] = {
-    mkExtractorsFromFile(tokens, "hyponym-rules.yml")
+  def mkHypernymExtractors(tokens: Seq[String], lemmatize: Boolean): Seq[Extractor] = {
+    mkExtractorsFromFile(tokens, "hypernym-rules.yml", lemmatize)
   }
 
-  def mkCohyponymExtractors(tokens: Seq[String]): Seq[Extractor] = {
-    mkExtractorsFromFile(tokens, "cohyponym-rules.yml")
+  def mkHyponymExtractors(tokens: Seq[String], lemmatize: Boolean): Seq[Extractor] = {
+    mkExtractorsFromFile(tokens, "hyponym-rules.yml", lemmatize)
+  }
+
+  def mkCohyponymExtractors(tokens: Seq[String], lemmatize: Boolean): Seq[Extractor] = {
+    mkExtractorsFromFile(tokens, "cohyponym-rules.yml", lemmatize)
   }
 
   /** gets the contents of a rule file, as well as a tokenized query
    *  and returns the corresponding odinson extractors
    */
-  def mkExtractorsFromFile(tokens: Seq[String], rulefile: String): Seq[Extractor] = {
+  def mkExtractorsFromFile(tokens: Seq[String], rulefile: String, lemmatize: Boolean): Seq[Extractor] = {
     using (Source.fromResource(rulefile)) { rules =>
-      mkExtractorsFromRules(tokens, rules.mkString)
+      mkExtractorsFromRules(tokens, rules.mkString, lemmatize)
     }
   }
 
-  def mkExtractorsFromRules(tokens: Seq[String], rules: String): Seq[Extractor] = {
-    val variables = Map("query" -> mkLemmaPattern(tokens))
-    extractorEngine.ruleReader.compileRuleFile(rules.mkString, variables)
+  def mkExtractorsFromRules(tokens: Seq[String], rules: String, lemmatize: Boolean): Seq[Extractor] = {
+    val variables = if (lemmatize == true) {
+      Map("query" -> mkLemmaPattern(tokens))
+    } else Map("query" -> mkNormPattern(tokens))
+    extractorEngine.compileRuleString(rules.mkString, variables)
   }
 
   // --------------------------------------------
