@@ -169,7 +169,7 @@ class TaxonomyReader(
   // tokens changed to lemmas as the first argument  
   def mkLemmaPattern(lemmas: Seq[String]): String = {            
     //println("TOKENS: " + tokens.mkString(" "))
-//    println("LEMMAS: " + lemmas.mkString(" "))
+    println("LEMMAS: " + lemmas.mkString(" "))
     lemmas
       .map(x => s"[lemma=${QueryUtils.maybeQuoteLabel(x)}]")
       .mkString(" ")
@@ -205,7 +205,7 @@ class TaxonomyReader(
   }
 
   def mkExtractorsFromRules(tokens: Seq[String], rules: String, lemmatize: Boolean): Seq[Extractor] = {
-    val variables = if (lemmatize == true) {
+    val variables = if (lemmatize) {
       Map("query" -> mkLemmaPattern(tokens))
     } else Map("query" -> mkNormPattern(tokens))
     extractorEngine.compileRuleString(rules.mkString, variables)
