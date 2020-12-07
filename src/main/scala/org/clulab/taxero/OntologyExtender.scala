@@ -139,6 +139,7 @@ object OntologyExtender extends App with LazyLogging {
   }
 
   def isSimilarToLeafHeader(result: ScoredMatch, header: Seq[String], similarityToHeaderTreshold: Double): Boolean = {
+    // todo: When calculating the embedding for the name/header of the leaf, add decay, that is decrease the weight of the nodes on the path as we move up the ontology (decrease node weight by, for example, half every step up the ontology)
     reader.similarityScore(result.result.map(_.toLowerCase()), header) > similarityToHeaderTreshold
   }
 
