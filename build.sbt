@@ -1,12 +1,17 @@
 name := "taxero"
 organization := "org.clulab"
 
+val procVersion = "8.2.3"
+val procModelVer = "7.5.4"
+val odinsonVer = "0.3.0-SNAPSHOT"
+
 libraryDependencies ++= Seq(
-  "org.clulab" %% "processors-main" % "7.4.4",
-  "org.clulab" %% "processors-corenlp" % "7.4.4",
-  "org.clulab" %% "processors-modelsmain" % "7.4.4",
-  "org.clulab" %% "processors-modelscorenlp" % "7.4.4",
-  "ai.lum" %% "odinson-core" % "0.2.2",
+  "org.clulab" %% "processors-main" % procVersion,
+  "org.clulab" %% "processors-corenlp" % procVersion,
+  "org.clulab" %% "processors-modelsmain" % procModelVer,
+  "org.clulab" %% "processors-modelscorenlp" % procModelVer,
+  "ai.lum" %% "odinson-core" % odinsonVer,
+  "ai.lum" %% "odinson-extra" % odinsonVer,
   "ai.lum" %% "common" % "0.0.9",
 )
 
