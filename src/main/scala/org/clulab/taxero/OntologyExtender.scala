@@ -15,18 +15,25 @@ object OntologyExtender extends App with LazyLogging {
   // given a directory with ontology files, where each file has the ontology leaf header and a set of examples for the leaf of the ontology,
   // produces corresponding files with the example sets enriched with hyponyms and co-hyponyms
 
+
   // get the reader
   val config: Config = ConfigFactory.load()
   val reader = TaxonomyReader.fromConfig
-  val ontologyDirectory = config.apply[File]("ontologyExtender.ontologyDir")
-  val similarityToHeaderTreshold = config.apply[Double]("ontologyExtender.similarityToHeaderTreshold")
+
+  // get mode
   val manualEval = config.apply[Boolean]("ontologyExtender.manualEval")
+  // get dirs
+  val ontologyDirectory = config.apply[File]("ontologyExtender.ontologyDir")
+  val outputDir = config.apply[File]("ontologyExtender.outputDir")
+
+  // get settings
+  val similarityToHeaderTreshold = config.apply[Double]("ontologyExtender.similarityToHeaderTreshold")
   val inclOriginalLeaf = config.apply[Boolean]("ontologyExtender.inclOriginalLeaf")
   val lemmatize = config.apply[Boolean]("ontologyExtender.lemmatize")
   val onlyQueryByLeafHeaderTerms = config.apply[Boolean]("ontologyExtender.onlyQueryByLeafHeaderTerms")
   val maxExamplesToAddPerOntologyLeaf = config.apply[Int]("ontologyExtender.maxExamplesToAddPerOntologyLeaf")
+
   // create directories and files
-  val outputDir = config.apply[File]("ontologyExtender.outputDir")
   outputDir.mkdir()
   val files = ontologyDirectory.listFiles()
 
@@ -63,7 +70,6 @@ object OntologyExtender extends App with LazyLogging {
       val resultsFromAllTerms = new ArrayBuffer[ScoredMatch]()
       val singleWordQueryResult = new ArrayBuffer[ScoredMatch]()
       val multiWordQueryResult = new ArrayBuffer[ScoredMatch]()
-
 
 
       for (eg <- queries.filter(_.length > 0).map(_.toLowerCase())) {
@@ -105,10 +111,6 @@ object OntologyExtender extends App with LazyLogging {
       } else Seq.empty
 
 
-      def getStringToWrite(results: Seq[String], maxExamplesToAddPerOntologyLeaf: Int): String = {
-        val string = results.distinct.filter(_.length > 0).slice(0, maxExamplesToAddPerOntologyLeaf).mkString("")
-        string
-      }
       val bw = new BufferedWriter(new FileWriter(outfile))
       if (inclOriginalLeaf) {
         bw.write(lines.head)
@@ -174,6 +176,11 @@ object OntologyExtender extends App with LazyLogging {
        res => !cleanQueries.contains(res.result.mkString(" ").toLowerCase))
        .sortBy(-_.score)
        .map(res => res.result.mkString(" ") + "\t" + res.query.mkString(" ") + "\t" + res.score.toString + "\t" + res.similarity.toString + "\t" + reader.similarityScore(res.result.map(_.toLowerCase()), headerLemmas).toString + "\n")
+  }
+
+  def getStringToWrite(results: Seq[String], maxExamplesToAddPerOntologyLeaf: Int): String = {
+    val string = results.distinct.filter(_.length > 0).slice(0, maxExamplesToAddPerOntologyLeaf).mkString("")
+    string
   }
 
 }
