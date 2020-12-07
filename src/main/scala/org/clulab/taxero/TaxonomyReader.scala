@@ -44,43 +44,43 @@ object TaxonomyReader {
 class TaxonomyReader(
   val extractorEngine: ExtractorEngine,
   val wordEmbeddings: Word2Vec,
-  val numEvidenceDisplay: Int,
+  val numEvidenceDisplay: Int
 ) {
 
   val proc = new FastNLPProcessor
 
   def getRankedHypernyms(tokens: Seq[String], lemmatize: Boolean): Seq[ScoredMatch] = {
-    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val items = if (lemmatize) convertToLemmas(tokens) else tokens
     val extractors = mkHypernymExtractors(items, lemmatize)
     val matches = getMatches(extractors)
     rankMatches(items, matches)
   }
 
   def getRankedHyponyms(tokens: Seq[String], lemmatize: Boolean): Seq[ScoredMatch] = {
-    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val items = if (lemmatize) convertToLemmas(tokens) else tokens
     val extractors = mkHyponymExtractors(items, lemmatize)
     val matches = getMatches(extractors)
     rankMatches(items, matches)
   }
 
   def getRankedCohyponyms(tokens: Seq[String], lemmatize: Boolean): Seq[ScoredMatch] = {
-    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val items = if (lemmatize) convertToLemmas(tokens) else tokens
     val extractors = mkCohyponymExtractors(items, lemmatize)
     val matches = getMatches(extractors)
     rankMatches(items, matches)
   }
 
-  def getExpandedHypernyms(pattern: Seq[String], n: Int): Seq[ScoredMatch] = {
+  def getExpandedHypernyms(pattern: Seq[String], n: Int, lemmatize: Boolean): Seq[ScoredMatch] = {
     // start query set with the provided query
     val allQueries = mutable.HashSet(pattern)
     // add the n closest cohyponyms to the query set
-    allQueries ++= getRankedCohyponyms(pattern, lemmatize = true).take(n).map(_.result)
+    allQueries ++= getRankedCohyponyms(pattern, lemmatize).take(n).map(_.result)
     // start an empty map for the hypernym candidate counts
     val hypernymCounts = new Consolidator
     // count hypernym candidates
     for {
       q <- allQueries
-      m <- getRankedHypernyms(q, lemmatize = true)                 // getHypernyms changed to getRankedHypernyms
+      m <- getRankedHypernyms(q, lemmatize)                 // getHypernyms changed to getRankedHypernyms
     } hypernymCounts.add(m.result, m.count, Nil)
     // add the heads of each hypernym to the results
     for (candidate <- hypernymCounts.keys) {
@@ -93,7 +93,7 @@ class TaxonomyReader(
   }
 
   def executeGivenRules(tokens: Seq[String], rules: String, lemmatize: Boolean): Seq[ScoredMatch] = {
-    val items = if (lemmatize==true) convertToLemmas(tokens) else tokens
+    val items = if (lemmatize) convertToLemmas(tokens) else tokens
     val extractors = mkExtractorsFromRules(items, rules, lemmatize)
     val matches = getMatches(extractors)
     rankMatches(items, matches)
@@ -167,9 +167,8 @@ class TaxonomyReader(
   }
 
   // tokens changed to lemmas as the first argument  
-  def mkLemmaPattern(lemmas: Seq[String]): String = {            
-    //println("TOKENS: " + tokens.mkString(" "))
-    println("LEMMAS: " + lemmas.mkString(" "))
+  def mkLemmaPattern(lemmas: Seq[String]): String = {
+//    println("LEMMAS: " + lemmas.mkString(" "))
     lemmas
       .map(x => s"[lemma=${QueryUtils.maybeQuoteLabel(x)}]")
       .mkString(" ")
@@ -178,6 +177,7 @@ class TaxonomyReader(
   }
 
   def mkNormPattern(tokens: Seq[String]): String = {
+//    println("TOKENS: " + tokens.mkString(" "))
     tokens
       .map(x => s"[norm=${QueryUtils.maybeQuoteLabel(x)}]")
       .mkString(" ")
