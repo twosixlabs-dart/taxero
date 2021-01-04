@@ -39,7 +39,7 @@ object OntologyExtender extends App with LazyLogging {
 
   for (file <- files) {
     Try {
-      val outfile = new File(outputDir, file.getName.replace(".txt", ".csv"))
+      val outfile = new File(outputDir, file.getName.replace(".txt", ".txt"))
       // retrieve existing examples
       val lines = Source.fromFile(file).getLines().toList
       val (header, examples) = lines.partition(_.startsWith("#"))
@@ -60,6 +60,7 @@ object OntologyExtender extends App with LazyLogging {
 
       // lemmas in the header - used for filtering examples unrelated to the ontology leaf; use full header, not only the last item in the header because while some terms there are to generic to use for queries, they help to narrow down the general topic of the ontology leaf
       val headerLemmas = getHeaderLemmas(header)
+      val headerLemmasNested = getHeaderLemmasNonFlat(header.head) // just take the first header
 
       val queries = if (onlyQueryByLeafHeaderTerms) {
         headerQueries
@@ -76,20 +77,21 @@ object OntologyExtender extends App with LazyLogging {
         val egAsSeq = eg.split(" ")
         // hyponym results
         val results = reader.getRankedHyponyms(egAsSeq, lemmatize)
-        for (r <- results) if (isSimilarToLeafHeader(r, headerLemmas, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
+//        for (r <- results) if (isSimilarToLeafHeader(r, headerLemmas, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
+        for (r <- results) if(isSimilarToLeafWithDecay(r, headerLemmasNested, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
         // cohyponym results
         val coResults = reader.getRankedCohyponyms(egAsSeq, lemmatize)
-        for (r <-coResults) if (isSimilarToLeafHeader(r, headerLemmas, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
+        for (r <-coResults) if(isSimilarToLeafWithDecay(r, headerLemmasNested, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
 
         if (manualEval) {
           val (singleWord, multiWord) = results.partition(_.query.length < 2)
 
-          for (sw <- singleWord) if (isSimilarToLeafHeader(sw, headerLemmas, similarityToHeaderTreshold)) singleWordQueryResult.append(sw)
-          for (mw <- multiWord)  if (isSimilarToLeafHeader(mw, headerLemmas, similarityToHeaderTreshold)) multiWordQueryResult.append(mw)
+          for (sw <- singleWord) if(isSimilarToLeafWithDecay(sw, headerLemmasNested, similarityToHeaderTreshold)) singleWordQueryResult.append(sw)
+          for (mw <- multiWord) if(isSimilarToLeafWithDecay(mw, headerLemmasNested, similarityToHeaderTreshold)) multiWordQueryResult.append(mw)
 
           val (singleWordCohyp, multiWordCohyp) = coResults.partition(_.query.length < 2)
-          for (sw <- singleWordCohyp) if (isSimilarToLeafHeader(sw, headerLemmas, similarityToHeaderTreshold))  singleWordQueryResult.append(sw)
-          for (mw <- multiWordCohyp) if (isSimilarToLeafHeader(mw, headerLemmas, similarityToHeaderTreshold)) multiWordQueryResult.append(mw)
+          for (sw <- singleWordCohyp) if(isSimilarToLeafWithDecay(sw, headerLemmasNested, similarityToHeaderTreshold))  singleWordQueryResult.append(sw)
+          for (mw <- multiWordCohyp) if(isSimilarToLeafWithDecay(mw, headerLemmasNested, similarityToHeaderTreshold)) multiWordQueryResult.append(mw)
         }
       }
 
@@ -97,23 +99,24 @@ object OntologyExtender extends App with LazyLogging {
       val cleanQueries = queries.filter(_.length > 0).map(_.toLowerCase())
 
       val sortedResults = if (manualEval) {
-        returnResultsForManualEval(resultsFromAllTerms, cleanQueries, headerLemmas)
+        returnResultsForManualEval(resultsFromAllTerms, cleanQueries, headerLemmasNested)
       } else {
         resultsFromAllTerms.filter(res => !cleanQueries.contains(res.result.mkString(" ").toLowerCase)).sortBy(-_.score).map(res => res.result.mkString(" ") + "\n")
       }
 
       val sortedResultsSingleWord = if (manualEval) {
-        returnResultsForManualEval(singleWordQueryResult, cleanQueries, headerLemmas)
+        returnResultsForManualEval(singleWordQueryResult, cleanQueries, headerLemmasNested)
       } else Seq.empty
 
       val sortedResultsMultiWord = if (manualEval) {
-        returnResultsForManualEval(multiWordQueryResult, cleanQueries, headerLemmas)
+        returnResultsForManualEval(multiWordQueryResult, cleanQueries, headerLemmasNested)
       } else Seq.empty
 
 
       val bw = new BufferedWriter(new FileWriter(outfile))
       if (inclOriginalLeaf) {
-        bw.write(lines.head)
+        bw.write(header.mkString("\n"))
+//        bw.write(lines.head)
         bw.write("\n" + examples.filter(_.length > 0).mkString("\n"))
         bw.write("\n")
       }
@@ -141,6 +144,41 @@ object OntologyExtender extends App with LazyLogging {
   def isSimilarToLeafHeader(result: ScoredMatch, header: Seq[String], similarityToHeaderTreshold: Double): Boolean = {
     // todo: When calculating the embedding for the name/header of the leaf, add decay, that is decrease the weight of the nodes on the path as we move up the ontology (decrease node weight by, for example, half every step up the ontology)
     reader.similarityScore(result.result.map(_.toLowerCase()), header) > similarityToHeaderTreshold
+  }
+
+  def decayingScore(result: ScoredMatch, header: Seq[Seq[String]]): Double = {
+    val scoreWeights = new ArrayBuffer[Double]()
+    var highestScore = 1.0
+    scoreWeights.append(highestScore)
+    for (i <- 1 to header.length-1) {
+      //      println("->>" + i)
+      val nextScore = highestScore / 2
+      scoreWeights.append(nextScore)
+      highestScore = nextScore
+    }
+    //    for (sc <- scoreWeights.reverse) println(sc)
+
+    var overallScore = 0.0
+    val scoreWeightsReversed = scoreWeights.reverse
+    for ((node, ind) <- header.zipWithIndex) {
+      overallScore += reader.similarityScore(result.result.map(_.toLowerCase()), node) * scoreWeightsReversed(ind)
+      println("node: " + node.mkString("|"))
+      println("sim score: " + reader.similarityScore(result.result.map(_.toLowerCase()), node))
+      println("multiplier: " + scoreWeightsReversed(ind))
+      println("added score" + reader.similarityScore(result.result.map(_.toLowerCase()), node) * scoreWeightsReversed(ind))
+
+
+    }
+    println("SCORE: " + overallScore)
+    overallScore
+
+  }
+
+  def isSimilarToLeafWithDecay(result: ScoredMatch, header: Seq[Seq[String]], similarityToHeaderThreshold: Double): Boolean = {
+    val score = decayingScore(result, header)
+    score > similarityToHeaderThreshold
+
+//    println("SCORE: " + overallScore)
   }
 
   // not currently used
@@ -172,11 +210,32 @@ object OntologyExtender extends App with LazyLogging {
       .split("/").distinct)
   }
 
-  def returnResultsForManualEval(results: Seq[ScoredMatch], cleanQueries: Seq[String], headerLemmas: Seq[String]): Seq[String] = {
+  def getHeaderLemmasNonFlat(fullHeader: String): Seq[Seq[String]] = {
+
+    val toReturn = fullHeader
+      .replace("#", "").replace(" ", "")
+      .split("/")
+      .map(_.split("And|Or|(?=[A-Z])").filter(_.length >0).map(_.toLowerCase()).toSeq)
+//    println(toReturn)
+//      .map(_.split("/").tail.mkString("/"))
+//      .map(_.split("And|Or|(?=[A-Z])"))
+    //      .filter(_!="/").map(_.toLowerCase()))
+//      .map(reader.convertToLemmas(_))
+
+//    for (tr <- toReturn) println("=>" + tr.mkString("|"))
+//        .map(_.split("And|Or|(?=[A-Z])"))
+//        .mkString("/")
+//        .map()
+//        .split("And|Or|(?=[A-Z])")
+//        .map(_.toLowerCase()).distinct
+    toReturn.toSeq
+  }
+
+  def returnResultsForManualEval(results: Seq[ScoredMatch], cleanQueries: Seq[String], headerLemmas: Seq[Seq[String]]): Seq[String] = {
     results.filter(
        res => !cleanQueries.contains(res.result.mkString(" ").toLowerCase))
        .sortBy(-_.score)
-       .map(res => res.result.mkString(" ") + "\t" + res.query.mkString(" ") + "\t" + res.score.toString + "\t" + res.similarity.toString + "\t" + reader.similarityScore(res.result.map(_.toLowerCase()), headerLemmas).toString + "\n")
+       .map(res => res.result.mkString(" ") + "\t" + res.query.mkString(" ") + "\t" + res.score.toString + "\t" + res.similarity.toString + "\t" + decayingScore(res, headerLemmas).toString + "\n")
   }
 
   def getStringToWrite(results: Seq[String], maxExamplesToAddPerOntologyLeaf: Int): String = {
