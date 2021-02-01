@@ -10,6 +10,9 @@ import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import scala.util.{Failure, Success, Try}
 import com.typesafe.scalalogging.LazyLogging
+import ujson.IndexedValue.True
+
+import scala.collection.mutable
 
 object OntologyExtender extends App with LazyLogging {
   // given a directory with ontology files, where each file has the ontology leaf header and a set of examples for the leaf of the ontology,
@@ -31,18 +34,34 @@ object OntologyExtender extends App with LazyLogging {
   val inclOriginalLeaf = config.apply[Boolean]("ontologyExtender.inclOriginalLeaf")
   val lemmatize = config.apply[Boolean]("ontologyExtender.lemmatize")
   val onlyQueryByLeafHeaderTerms = config.apply[Boolean]("ontologyExtender.onlyQueryByLeafHeaderTerms")
-  val maxExamplesToAddPerOntologyLeaf = config.apply[Int]("ontologyExtender.maxExamplesToAddPerOntologyLeaf")
+  val countThreshold = config.apply[Int]("ontologyExtender.countThreshold")
+  val addExamplesProportionallyToCurrentNum = config.apply[Boolean]("ontologyExtender.addExamplesProportionallyToCurrentNum")
+  val proportionToExpandBy = config.apply[Double]("ontologyExtender.proportionToExpandBy")
+  val maxExamplesToAddPerOntologyLeafDefault = config.apply[Int]("ontologyExtender.maxExamplesToAddPerOntologyLeaf")
 
   // create directories and files
   outputDir.mkdir()
   val files = ontologyDirectory.listFiles()
 
+  val (termToLeaf, allHeaders) = getTermToLeafMap(ontologyDirectory)
+//  val otherHeaders = ???
+
+
+  for (t <- termToLeaf) println(t._1 + "||" + t._2.mkString("++++"))
+
+  var examplesAddedPerFile = 0
+  var numOfFilesSucceeded = 0
   for (file <- files) {
     Try {
-      val outfile = new File(outputDir, file.getName.replace(".txt", ".txt"))
+      val outfile = new File(outputDir, file.getName.replace(".txt", ".csv"))
       // retrieve existing examples
       val lines = Source.fromFile(file).getLines().toList
       val (header, examples) = lines.partition(_.startsWith("#"))
+      val existingExampleLemmas = examples.map(_.split(" ")).flatten
+//      for (cet <- currentExampleTokens) println("||" + cet + "||")
+//      println("\n")
+      val maxExamplesToAddPerOntologyLeaf = if (addExamplesProportionallyToCurrentNum) (examples.length * proportionToExpandBy).toInt else maxExamplesToAddPerOntologyLeafDefault
+//      println(maxExamplesToAddPerOntologyLeaf + "<- max len to write for leaf " + file.getName)
 
       // only the last item on the path in the header is used for querying,
       // but there could be multiple header lines in one ontology file
@@ -77,21 +96,20 @@ object OntologyExtender extends App with LazyLogging {
         val egAsSeq = eg.split(" ")
         // hyponym results
         val results = reader.getRankedHyponyms(egAsSeq, lemmatize)
-//        for (r <- results) if (isSimilarToLeafHeader(r, headerLemmas, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
-        for (r <- results) if(isSimilarToLeafWithDecay(r, headerLemmasNested, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
+        for (r <- results) if(isSimilarToLeafWithDecay(r, headerLemmasNested, similarityToHeaderTreshold) && seenMoreThanK(r, countThreshold)) resultsFromAllTerms.append(r)
         // cohyponym results
         val coResults = reader.getRankedCohyponyms(egAsSeq, lemmatize)
-        for (r <-coResults) if(isSimilarToLeafWithDecay(r, headerLemmasNested, similarityToHeaderTreshold)) resultsFromAllTerms.append(r)
+        for (r <-coResults) if(isSimilarToLeafWithDecay(r, headerLemmasNested, similarityToHeaderTreshold) && seenMoreThanK(r, countThreshold)) resultsFromAllTerms.append(r)
 
         if (manualEval) {
           val (singleWord, multiWord) = results.partition(_.query.length < 2)
 
-          for (sw <- singleWord) if(isSimilarToLeafWithDecay(sw, headerLemmasNested, similarityToHeaderTreshold)) singleWordQueryResult.append(sw)
-          for (mw <- multiWord) if(isSimilarToLeafWithDecay(mw, headerLemmasNested, similarityToHeaderTreshold)) multiWordQueryResult.append(mw)
+          for (sw <- singleWord) if(isSimilarToLeafWithDecay(sw, headerLemmasNested, similarityToHeaderTreshold) && seenMoreThanK(sw, countThreshold)) singleWordQueryResult.append(sw)
+          for (mw <- multiWord) if(isSimilarToLeafWithDecay(mw, headerLemmasNested, similarityToHeaderTreshold) && seenMoreThanK(mw, countThreshold)) multiWordQueryResult.append(mw)
 
           val (singleWordCohyp, multiWordCohyp) = coResults.partition(_.query.length < 2)
-          for (sw <- singleWordCohyp) if(isSimilarToLeafWithDecay(sw, headerLemmasNested, similarityToHeaderTreshold))  singleWordQueryResult.append(sw)
-          for (mw <- multiWordCohyp) if(isSimilarToLeafWithDecay(mw, headerLemmasNested, similarityToHeaderTreshold)) multiWordQueryResult.append(mw)
+          for (sw <- singleWordCohyp) if(isSimilarToLeafWithDecay(sw, headerLemmasNested, similarityToHeaderTreshold) && seenMoreThanK(sw, countThreshold))  singleWordQueryResult.append(sw)
+          for (mw <- multiWordCohyp) if(isSimilarToLeafWithDecay(mw, headerLemmasNested, similarityToHeaderTreshold) && seenMoreThanK(mw, countThreshold)) multiWordQueryResult.append(mw)
         }
       }
 
@@ -131,18 +149,32 @@ object OntologyExtender extends App with LazyLogging {
         bw.write(getStringToWrite(sortedResultsMultiWord, maxExamplesToAddPerOntologyLeaf))
         bw.close()
       } else {
-        bw.write(getStringToWrite(sortedResults, maxExamplesToAddPerOntologyLeaf))
+        bw.write(getStringToWriteDistinctTokens(sortedResults, maxExamplesToAddPerOntologyLeaf, header.head, allHeaders, existingExampleLemmas))
         bw.close()
       }
 
     } match {
-      case Success(_) => logger.info(s"extended ontology leaf ${file.getName}")
+      case Success(_) => {
+        logger.info(s"extended ontology leaf ${file.getName}")
+        numOfFilesSucceeded += 1
+      }
+
       case Failure(e) => logger.error(s"failed to extend ontology leaf ${file.getName}", e)
     }
+
+  }
+
+  logger.info(s"FILES SUCCEEDED:\t ${numOfFilesSucceeded}")
+
+  def seenMoreThanK(result: ScoredMatch, k: Int): Boolean = {
+    result.count > k
+  }
+
+  def lemmaAlreadyExistsInExamples(token: String, examples: Seq[String]) = {
+    examples.contains(reader.convertToLemmas(Seq(token)).head)
   }
 
   def isSimilarToLeafHeader(result: ScoredMatch, header: Seq[String], similarityToHeaderTreshold: Double): Boolean = {
-    // todo: When calculating the embedding for the name/header of the leaf, add decay, that is decrease the weight of the nodes on the path as we move up the ontology (decrease node weight by, for example, half every step up the ontology)
     reader.similarityScore(result.result.map(_.toLowerCase()), header) > similarityToHeaderTreshold
   }
 
@@ -151,25 +183,16 @@ object OntologyExtender extends App with LazyLogging {
     var highestScore = 1.0
     scoreWeights.append(highestScore)
     for (i <- 1 to header.length-1) {
-      //      println("->>" + i)
       val nextScore = highestScore / 2
       scoreWeights.append(nextScore)
       highestScore = nextScore
     }
-    //    for (sc <- scoreWeights.reverse) println(sc)
 
     var overallScore = 0.0
     val scoreWeightsReversed = scoreWeights.reverse
     for ((node, ind) <- header.zipWithIndex) {
       overallScore += reader.similarityScore(result.result.map(_.toLowerCase()), node) * scoreWeightsReversed(ind)
-      println("node: " + node.mkString("|"))
-      println("sim score: " + reader.similarityScore(result.result.map(_.toLowerCase()), node))
-      println("multiplier: " + scoreWeightsReversed(ind))
-      println("added score" + reader.similarityScore(result.result.map(_.toLowerCase()), node) * scoreWeightsReversed(ind))
-
-
     }
-    println("SCORE: " + overallScore)
     overallScore
 
   }
@@ -177,8 +200,65 @@ object OntologyExtender extends App with LazyLogging {
   def isSimilarToLeafWithDecay(result: ScoredMatch, header: Seq[Seq[String]], similarityToHeaderThreshold: Double): Boolean = {
     val score = decayingScore(result, header)
     score > similarityToHeaderThreshold
+  }
 
-//    println("SCORE: " + overallScore)
+  def getTermToLeafMap(ontologyDirPath: File): (Map[String, ArrayBuffer[String]], Seq[String]) = {
+    val files = ontologyDirPath.listFiles()
+    val termToHeaderMap = mutable.Map[String, ArrayBuffer[String]]()
+    val allHeaders = new ArrayBuffer[String]()
+
+    for (file <- files) {
+      Try {
+        val source = Source.fromFile(file)
+        val lines = source.getLines().toList
+        source.close()
+        val (header, examples) = lines.partition(_.startsWith("#"))
+        allHeaders.append(header.head)
+        val distinctExamples = examples.flatMap(eg => eg.split(" ")).distinct
+        for (de <- distinctExamples) {
+          if (termToHeaderMap.contains(de)) {
+            termToHeaderMap(de).append(header.head)
+          } else {
+            termToHeaderMap(de) = new ArrayBuffer[String]()
+            termToHeaderMap(de).append(header.head)
+          }
+        }
+      }  match {
+      case Success(_) => None
+      case Failure(e) => logger.error(s"failed to get examples from ${file.getName}", e)
+    }
+
+
+    }
+    (termToHeaderMap.toMap, allHeaders)
+  }
+
+  def existsInOtherLeaves(currentTerm: String, termToLeaves: Map[String, Seq[String]], topHeader: String): Boolean = {
+    if (!termToLeaves.contains(currentTerm)) return false // the term does not exist as an example in any of the ontology leaves
+    if (termToLeaves(currentTerm).length > 1) return true // the term exists in more than one ontology leaf
+    if (termToLeaves(currentTerm).mkString("/") != topHeader) return true // there exists one leaf with the current term as an example and it is not the current ontology leaf (=topHeader)
+    false
+  }
+
+  def findMostSimilarHeader(token: String, otherNodeHeaders: Seq[String]): String = {
+    val scores = new ArrayBuffer[Double]()
+    for (h <- otherNodeHeaders) {
+      val headerLemmas = getHeaderLemmas(Seq(h))
+      val score = reader.similarityScore(Seq(token), headerLemmas)
+      scores.append(score)
+    }
+    val scoresWithIdx = scores.zipWithIndex
+    val sortedScoresWithIdx = scoresWithIdx.sortBy(_._1).reverse
+    val maxHeader = otherNodeHeaders(sortedScoresWithIdx.head._2)
+    maxHeader
+
+  }
+
+  def mostSimilarToCurrentLeaf(token: String, currentHeader: String, otherNodeHeaders: Seq[String]): Boolean = {
+    //- in distinct result terms, if it's most similar to current header, return true and keep the term; currently not used---filtering too aggressive
+    val maxHeader = findMostSimilarHeader(token, otherNodeHeaders)
+    if (maxHeader == currentHeader) return true else return false
+
   }
 
   // not currently used
@@ -241,6 +321,18 @@ object OntologyExtender extends App with LazyLogging {
   def getStringToWrite(results: Seq[String], maxExamplesToAddPerOntologyLeaf: Int): String = {
     val string = results.distinct.filter(_.length > 0).slice(0, maxExamplesToAddPerOntologyLeaf).mkString("")
     string
+  }
+
+  def getStringToWriteDistinctTokens(results: Seq[String], maxExamplesToAddPerOntologyLeaf: Int, topHeader: String, otherHeaders: Seq[String], existingExampleLemmas: Seq[String]): String = {
+    val string = results.distinct.filter(_.length > 0)
+      .flatMap(res => res.replace("\n","").split(" ")).distinct
+      .filter(term => !lemmaAlreadyExistsInExamples(term, existingExampleLemmas))
+      .filter(term => term.toLowerCase() == term)
+//      .filter(term => mostSimilarToCurrentLeaf(term, topHeader, otherHeaders))
+      .filter(term => !existsInOtherLeaves(term, termToLeaf, topHeader))
+      .slice(0, maxExamplesToAddPerOntologyLeaf).mkString("\n")
+    println("num of nodes added:\t" + string.split("\n").length + "leaf: " + topHeader)
+    "\nnew examples:\n" + string
   }
 
 }
