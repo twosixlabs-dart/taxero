@@ -10,13 +10,11 @@ import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import scala.util.{Failure, Success, Try}
 import com.typesafe.scalalogging.LazyLogging
-import ujson.IndexedValue.True
 
 import scala.collection.mutable
 
 object OntologyExtender extends App with LazyLogging {
-  // given a directory with ontology files, where each file has the ontology leaf header and a set of examples for the leaf of the ontology,
-  // produces corresponding files with the example sets enriched with hyponyms and co-hyponyms
+  // given a directory with ontology files, where each file has one or more ontology leaf paths as headers (e.g., Event/HealthAndDisease/Illness) and a set of examples for the leaf of the ontology, produces corresponding files with the example sets enriched with hyponyms and co-hyponyms
 
 
   // get the reader
@@ -44,10 +42,6 @@ object OntologyExtender extends App with LazyLogging {
   val files = ontologyDirectory.listFiles()
 
   val (termToLeaf, allHeaders) = getTermToLeafMap(ontologyDirectory)
-//  val otherHeaders = ???
-
-
-  for (t <- termToLeaf) println(t._1 + "||" + t._2.mkString("++++"))
 
   var examplesAddedPerFile = 0
   var numOfFilesSucceeded = 0
@@ -55,13 +49,12 @@ object OntologyExtender extends App with LazyLogging {
     Try {
       val outfile = new File(outputDir, file.getName.replace(".txt", ".csv"))
       // retrieve existing examples
-      val lines = Source.fromFile(file).getLines().toList
+      val source = Source.fromFile(file)
+      val lines = source.getLines().toList
+      source.close()
       val (header, examples) = lines.partition(_.startsWith("#"))
-      val existingExampleLemmas = examples.map(_.split(" ")).flatten
-//      for (cet <- currentExampleTokens) println("||" + cet + "||")
-//      println("\n")
+      val existingExampleLemmas = examples.flatMap(_.split(" "))
       val maxExamplesToAddPerOntologyLeaf = if (addExamplesProportionallyToCurrentNum) (examples.length * proportionToExpandBy).toInt else maxExamplesToAddPerOntologyLeafDefault
-//      println(maxExamplesToAddPerOntologyLeaf + "<- max len to write for leaf " + file.getName)
 
       // only the last item on the path in the header is used for querying,
       // but there could be multiple header lines in one ontology file
@@ -134,7 +127,6 @@ object OntologyExtender extends App with LazyLogging {
       val bw = new BufferedWriter(new FileWriter(outfile))
       if (inclOriginalLeaf) {
         bw.write(header.mkString("\n"))
-//        bw.write(lines.head)
         bw.write("\n" + examples.filter(_.length > 0).mkString("\n"))
         bw.write("\n")
       }
@@ -164,7 +156,7 @@ object OntologyExtender extends App with LazyLogging {
 
   }
 
-  logger.info(s"FILES SUCCEEDED:\t ${numOfFilesSucceeded}")
+  logger.info(s"FILES SUCCEEDED:\t $numOfFilesSucceeded")
 
   def seenMoreThanK(result: ScoredMatch, k: Int): Boolean = {
     result.count > k
@@ -203,6 +195,7 @@ object OntologyExtender extends App with LazyLogging {
   }
 
   def getTermToLeafMap(ontologyDirPath: File): (Map[String, ArrayBuffer[String]], Seq[String]) = {
+    // map every token in existin examples to all the ontology leaf paths/headers it occures in
     val files = ontologyDirPath.listFiles()
     val termToHeaderMap = mutable.Map[String, ArrayBuffer[String]]()
     val allHeaders = new ArrayBuffer[String]()
@@ -291,23 +284,12 @@ object OntologyExtender extends App with LazyLogging {
   }
 
   def getHeaderLemmasNonFlat(fullHeader: String): Seq[Seq[String]] = {
-
+    // used for decaying similarity score to the header, e.g., in a path #Events/IllnessAndDisease, the similarity score weight decay will be applied to Event, but not to Illness and Disease
+    // as the latter two are at the same level in the ontology
     val toReturn = fullHeader
       .replace("#", "").replace(" ", "")
       .split("/")
       .map(_.split("And|Or|(?=[A-Z])").filter(_.length >0).map(_.toLowerCase()).toSeq)
-//    println(toReturn)
-//      .map(_.split("/").tail.mkString("/"))
-//      .map(_.split("And|Or|(?=[A-Z])"))
-    //      .filter(_!="/").map(_.toLowerCase()))
-//      .map(reader.convertToLemmas(_))
-
-//    for (tr <- toReturn) println("=>" + tr.mkString("|"))
-//        .map(_.split("And|Or|(?=[A-Z])"))
-//        .mkString("/")
-//        .map()
-//        .split("And|Or|(?=[A-Z])")
-//        .map(_.toLowerCase()).distinct
     toReturn.toSeq
   }
 
@@ -324,6 +306,7 @@ object OntologyExtender extends App with LazyLogging {
   }
 
   def getStringToWriteDistinctTokens(results: Seq[String], maxExamplesToAddPerOntologyLeaf: Int, topHeader: String, otherHeaders: Seq[String], existingExampleLemmas: Seq[String]): String = {
+    // some of the filtering is only applied while writing the examples to ontology leaf files - for manual eval we keep the collocation results from taxero intact
     val string = results.distinct.filter(_.length > 0)
       .flatMap(res => res.replace("\n","").split(" ")).distinct
       .filter(term => !lemmaAlreadyExistsInExamples(term, existingExampleLemmas))
@@ -331,8 +314,8 @@ object OntologyExtender extends App with LazyLogging {
 //      .filter(term => mostSimilarToCurrentLeaf(term, topHeader, otherHeaders))
       .filter(term => !existsInOtherLeaves(term, termToLeaf, topHeader))
       .slice(0, maxExamplesToAddPerOntologyLeaf).mkString("\n")
-    println("num of nodes added:\t" + string.split("\n").length + "leaf: " + topHeader)
-    "\nnew examples:\n" + string
+    logger.info(s"num of nodes added:\t ${string.split("\n").length} for leaf: $topHeader")
+    string
   }
 
 }
