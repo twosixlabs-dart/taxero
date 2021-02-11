@@ -55,13 +55,13 @@ rules:
        ${skipquantifier} 
        ${result}
 
-  - name: hypo-7
-    type: basic
-    pattern: |
-       ${skipquantifier} 
-       ${result} 
-       (is|are) the /(most|least)/? [tag = /JJ.*/] 
-       ${query}
+#  - name: hypo-7
+#    type: basic
+#    pattern: |
+#       ${skipquantifier}
+#       ${result}
+#       (is|are) the /(most|least)/? [tag = /JJ.*/]
+#       ${query}
 
   - name: hypo-8
     type: basic  
@@ -88,14 +88,14 @@ rules:
        ${skipquantifier} 
        ${result}
 
-  - name: hypo-11
-    type: basic
-    pattern: |
-       ${skipquantifier} 
-       ${result} 
-       [lemma =be] (also|all)? /(an?|the)/? 
-       ${skipmeronymy} 
-       ${query}
+#  - name: hypo-11
+#    type: basic
+#    pattern: |
+#       ${skipquantifier}
+#       ${result}
+#       [lemma =be] (also|all)? /(an?|the)/?
+#       ${skipmeronymy}
+#       ${query}
 
   - name: hypo-12
     type: basic
