@@ -34,8 +34,11 @@ case class ScoredMatch(
 object TaxonomyReader {
   def fromConfig: TaxonomyReader = {
     val config = ConfigFactory.load()
+    println("\tloaded config...")
     val extractorEngine = ExtractorEngine.fromConfig
+    println("\textractor engine started...")
     val wordEmbeddings = new Word2Vec(config[String]("taxero.wordEmbeddings"))
+    println("\tword embeddings loaded...")
     val numEvidenceDisplay = config.get[Int]("taxero.numEvidenceDisplay").getOrElse(3)
     new TaxonomyReader(extractorEngine, wordEmbeddings, numEvidenceDisplay)
   }
@@ -132,6 +135,7 @@ class TaxonomyReader(
 
   def rankMatches(query: Seq[String], matches: Seq[Match]): Seq[ScoredMatch] = {
     matches
+      .filterNot(m => m.result == query)
       .map(m => scoreMatch(query, m))
       .sortBy(-_.score)
   }
