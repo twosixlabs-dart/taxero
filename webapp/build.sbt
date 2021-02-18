@@ -1,4 +1,4 @@
-name := "taxero-webapp"
+name := "webapp"
 
 // Adds additional packages into Twirl
 //TwirlKeys.templateImports += "org.clulab.controllers._"
