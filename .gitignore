@@ -1,15 +1,11 @@
 *.class
 *.log
 
-# Simple Build Tool
-# http://www.scala-sbt.org/release/docs/Getting-Started/Directories.html#configuring-version-control
+*.json
 
-dist/*
-target/
-lib_managed/
-src_managed/
-project/boot/
-project/plugins/project/
-.history
-.cache
-.lib/
+.idea/
+target
+project/project
+project/target
+
+.DS_Store
